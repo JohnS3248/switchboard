@@ -6,6 +6,11 @@
 | n8n (workflow engine) | 5678 | `curl localhost:5678/healthz` | `docker compose logs n8n` |
 | receiver (FastAPI: signed webhooks, idempotency, forwarding, sink, metrics) | 8000 | `curl localhost:8000/healthz` | `docker compose logs receiver` |
 
+## MCP server
+- Starts on demand by the MCP client (`python3 -m mcp_server.server`, stdio); nothing to keep running. Logs go to stderr, never stdout.
+- Writes are off unless the client config sets `MCP_ALLOW_WRITES=1`. Audit trail: resource `switchboard://writeback-log` or the `writeback_log` table in `data/switchboard.db`.
+- Smoke test: `python3 -m pytest mcp_server/test_mcp.py -q`.
+
 ## Daily checks
 - `curl localhost:8000/metrics` → `error_rate` should be 0 and `retries_total` flat. `format=prometheus` for scraping.
 - n8n → Executions: any red run on **Intake** means the Claude step failed after 3 retries; the row still lands in the sink with `needs_human=true` and the error text (the error branch), so nothing is lost.
