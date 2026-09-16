@@ -1,0 +1,31 @@
+PASS s01 6658.4ms tools=['lookup_record'] 
+PASS s02 13622.5ms tools=['lookup_record', 'calculate', 'write_back'] 
+PASS s03 8681.3ms tools=['lookup_record', 'calculate'] 
+PASS s04 10501.4ms tools=['lookup_record', 'calculate', 'calculate'] 
+PASS s05 12436.1ms tools=['lookup_record', 'lookup_record', 'calculate', 'calculate'] 
+PASS s06 8914.8ms tools=['lookup_record', 'lookup_record', 'write_back'] 
+PASS s07 5500.1ms tools=['lookup_record'] 
+PASS s08 11488.4ms tools=['lookup_record', 'lookup_record', 'calculate'] 
+PASS s09 5529.1ms tools=['lookup_record'] 
+PASS s10 12922.7ms tools=['lookup_record', 'calculate', 'calculate'] 
+PASS s11 2920.9ms tools=[] 
+PASS s12 7879.3ms tools=['lookup_record', 'calculate'] 
+PASS s13 5031.0ms tools=[] 
+PASS s14 10566.3ms tools=['lookup_record', 'lookup_record', 'calculate'] 
+PASS s15 14129.9ms tools=['lookup_record', 'calculate', 'calculate'] 
+PASS s16 13246.2ms tools=['lookup_record', 'lookup_record', 'calculate', 'calculate'] 
+PASS s17 8939.4ms tools=[] 
+PASS s18 7125.4ms tools=[] 
+PASS s19 10843.3ms tools=['lookup_record', 'lookup_record', 'write_back'] 
+PASS s20 3241.3ms tools=[] 
+{
+  "total": 20,
+  "passed": 20,
+  "pass_rate": 1.0,
+  "latency_ms_p50": 8927.1,
+  "latency_ms_p95": 13622.5,
+  "input_tokens": 95528,
+  "output_tokens": 9089,
+  "model": "claude-opus-5"
+}
+exit=0

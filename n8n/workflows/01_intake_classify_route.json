@@ -1,0 +1,285 @@
+{
+  "name": "Switchboard \u00b7 Intake: classify & route inbound events",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "switchboard/intake",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "b09cb281-b040-4721-a6c1-082991e497b5",
+      "name": "Webhook (intake)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "switchboard-intake"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise the inbound event into one shape the LLM step can rely on.\nconst body = $input.first().json.body || $input.first().json;\nconst event = {\n  source: body.source || 'unknown',\n  event_type: body.event_type || body.type || 'unknown',\n  customer: body.customer || body.email || 'unknown',\n  text: body.text || body.message || JSON.stringify(body),\n  amount: body.amount ?? null,\n  received_at: new Date().toISOString(),\n};\nreturn [{ json: event }];"
+      },
+      "id": "ab3ef85b-1c19-4f8f-a786-54128ceb387d",
+      "name": "Normalise event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'claude-opus-5',\n  max_tokens: 1024,\n  system: 'You are Switchboard, an operations triage assistant for a group of retail, hospitality and sports businesses. Classify the inbound event and reply with JSON only, no prose, matching exactly: {\"category\": one of [\"order\",\"refund\",\"complaint\",\"enquiry\",\"spam\",\"other\"], \"priority\": one of [\"low\",\"normal\",\"high\",\"urgent\"], \"summary\": one sentence, \"suggested_action\": one sentence, \"needs_human\": boolean}. Mark needs_human true for refunds, complaints, legal or safety issues, or anything ambiguous.',\n  messages: [{ role: 'user', content: 'Event from ' + $json.source + ' (' + $json.event_type + ') for customer ' + $json.customer + (($json.amount !== null) ? ' amount ' + $json.amount : '') + ':\\n' + $json.text }]\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "9462e170-1443-4c6a-a689-cc6cdf78d23e",
+      "name": "Claude: classify & summarise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's JSON answer; fall back to a safe default that routes to a human.\nconst ev = $('Normalise event').first().json;\nconst res = $input.first().json;\nlet parsed = null;\ntry {\n  const text = (res.content || []).filter(b => b.type === 'text').map(b => b.text).join('');\n  parsed = JSON.parse(text.replace(/^```json|```$/g, '').trim());\n} catch (e) {\n  parsed = { category: 'other', priority: 'high', summary: 'LLM output could not be parsed', suggested_action: 'Review manually', needs_human: true, parse_error: String(e) };\n}\nreturn [{ json: { ...ev, ...parsed, model: res.model || null, input_tokens: res.usage?.input_tokens ?? null, output_tokens: res.usage?.output_tokens ?? null } }];"
+      },
+      "id": "37e6d485-5387-4ecf-b5df-94389d0f3039",
+      "name": "Parse result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Claude step failed after retries: route to a human with the error attached.\nconst ev = $('Normalise event').first().json;\nconst err = $input.first().json;\nreturn [{ json: { ...ev, category: 'other', priority: 'high', summary: 'LLM step failed', suggested_action: 'Review manually', needs_human: true, error: err.error?.message || JSON.stringify(err).slice(0, 300) } }];"
+      },
+      "id": "376cc936-1a8f-4e3a-a2e2-9227484c487a",
+      "name": "On LLM error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SINK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "47e76f00-5518-4e37-9a2e-2cfa38e82e16",
+      "name": "Append row (sheet sink)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d1e967a1-223e-4581-b8c1-3b3a8b7504ac",
+              "leftValue": "={{ $env.SLACK_WEBHOOK_URL || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "b8fd6aee-9dac-43c9-9b46-e280f5ae2dd7",
+              "leftValue": "={{ $json.needs_human }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cf270c02-626f-4fec-b05e-c89b7cb68d73",
+      "name": "Needs human & Slack configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: ':rotating_light: [' + $json.priority + '] ' + $json.category + ' from ' + $json.customer + ' \u2014 ' + $json.summary + '\\nSuggested: ' + $json.suggested_action }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "6a639d9d-87fd-4ed3-aead-a700b8f2612b",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        -80
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook (intake)": {
+      "main": [
+        [
+          {
+            "node": "Normalise event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise event": {
+      "main": [
+        [
+          {
+            "node": "Claude: classify & summarise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude: classify & summarise": {
+      "main": [
+        [
+          {
+            "node": "Parse result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "On LLM error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse result": {
+      "main": [
+        [
+          {
+            "node": "Append row (sheet sink)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On LLM error": {
+      "main": [
+        [
+          {
+            "node": "Append row (sheet sink)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row (sheet sink)": {
+      "main": [
+        [
+          {
+            "node": "Needs human & Slack configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs human & Slack configured?": {
+      "main": [
+        [
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  }
+}

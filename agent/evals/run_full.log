@@ -1,0 +1,31 @@
+PASS s01 6700.5ms tools=['lookup_record'] 
+PASS s02 13543.5ms tools=['lookup_record', 'write_back', 'calculate'] 
+PASS s03 7505.5ms tools=['lookup_record'] 
+FAIL s04 10303.3ms tools=['lookup_record', 'calculate', 'calculate'] ["category: expected 'refund', got 'complaint'"]
+PASS s05 10187.0ms tools=['lookup_record', 'lookup_record', 'calculate', 'calculate'] 
+PASS s06 7388.7ms tools=['lookup_record', 'write_back'] 
+PASS s07 5179.3ms tools=['lookup_record'] 
+PASS s08 10230.2ms tools=['lookup_record', 'lookup_record', 'calculate'] 
+PASS s09 5497.7ms tools=['lookup_record'] 
+PASS s10 11962.5ms tools=['lookup_record', 'calculate', 'calculate'] 
+PASS s11 6207.7ms tools=[] 
+PASS s12 7047.4ms tools=['lookup_record', 'calculate'] 
+PASS s13 4914.4ms tools=[] 
+FAIL s14 9506.4ms tools=['lookup_record', 'lookup_record', 'calculate'] ["category: expected 'order_status', got 'enquiry'", 'needs_human: expected False, got True']
+PASS s15 15293.2ms tools=['lookup_record', 'calculate'] 
+PASS s16 14025.9ms tools=['lookup_record', 'lookup_record', 'calculate', 'calculate'] 
+FAIL s17 13429.6ms tools=[] ['needs_human: expected False, got True']
+PASS s18 5573.9ms tools=[] 
+PASS s19 11944.0ms tools=['lookup_record', 'lookup_record', 'write_back', 'calculate'] 
+PASS s20 3236.2ms tools=[] 
+{
+  "total": 20,
+  "passed": 17,
+  "pass_rate": 0.85,
+  "latency_ms_p50": 8506.0,
+  "latency_ms_p95": 14025.9,
+  "input_tokens": 90676,
+  "output_tokens": 8820,
+  "model": "claude-opus-5"
+}
+exit=1
