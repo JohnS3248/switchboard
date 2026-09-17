@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from .. import seed as seeder
-from ..agent import run
+from ..agent import run as run_manual
 from ..tools import DB_PATH
 import sqlite3
 
@@ -58,7 +58,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="")
     ap.add_argument("--model", default=None)
+    ap.add_argument("--impl", choices=["manual", "langgraph"], default="manual",
+                    help="which agent implementation to evaluate (same tools, prompt, schema and scenarios)")
     args = ap.parse_args()
+    if args.impl == "langgraph":
+        from ..langgraph_agent import run
+    else:
+        run = run_manual
+    suffix = "" if args.impl == "manual" else f"_{args.impl}"
     scenarios = json.loads((HERE / "scenarios.json").read_text())
     if args.only:
         keep = set(args.only.split(","))
@@ -88,13 +95,13 @@ def main() -> int:
                "latency_ms_p50": round(statistics.median(lat), 1) if lat else None,
                "latency_ms_p95": round(sorted(lat)[int(0.95 * (len(lat) - 1))], 1) if lat else None,
                "input_tokens": sum(r["input_tokens"] for r in rows), "output_tokens": sum(r["output_tokens"] for r in rows),
-               "model": args.model or __import__("agent.agent", fromlist=["MODEL"]).MODEL}
-    (HERE / "report.json").write_text(json.dumps({"summary": summary, "rows": rows}, indent=2, default=str))
-    md = [f"# Switchboard agent evals\n", f"Model: `{summary['model']}` · {passed}/{len(rows)} passed · p50 {summary['latency_ms_p50']} ms · p95 {summary['latency_ms_p95']} ms · tokens in/out {summary['input_tokens']}/{summary['output_tokens']}\n",
+               "model": args.model or __import__("agent.agent", fromlist=["MODEL"]).MODEL, "impl": args.impl}
+    (HERE / f"report{suffix}.json").write_text(json.dumps({"summary": summary, "rows": rows}, indent=2, default=str))
+    md = [f"# Switchboard agent evals ({args.impl})\n", f"Model: `{summary['model']}` · {passed}/{len(rows)} passed · p50 {summary['latency_ms_p50']} ms · p95 {summary['latency_ms_p95']} ms · tokens in/out {summary['input_tokens']}/{summary['output_tokens']}\n",
           "| id | pass | tools | rounds | latency ms | failures |", "|---|---|---|---|---|---|"]
     for r in rows:
         md.append(f"| {r['id']} | {'✅' if r['passed'] else '❌'} | {' → '.join(r['tools'])} | {r['rounds']} | {r['latency_ms']} | {'; '.join(r['failures'])} |")
-    (HERE / "report.md").write_text("\n".join(md) + "\n")
+    (HERE / f"report{suffix}.md").write_text("\n".join(md) + "\n")
     print(json.dumps(summary, indent=2))
     return 0 if passed == len(rows) else 1
 
