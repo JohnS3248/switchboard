@@ -8,3 +8,6 @@ pytest==9.0.3
 # retrieval branch (agent/retrieval): all-MiniLM-L6-v2 through ONNX runtime, no torch required
 numpy>=2.0
 fastembed==0.8.0
+# Azure OpenAI fallback (agent/azure_openai.py): Entra ID auth, no key
+openai==1.102.0
+azure-identity==1.25.3

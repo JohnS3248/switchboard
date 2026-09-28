@@ -115,6 +115,21 @@ Measured on this machine, 28 Sep 2026 (`agent/retrieval/report_retrieval.md`), o
 
 The three questions not retrieved at rank 1 (q01, q11, q15) still had the right passage in the top 4, so every answer had what it needed. An earlier run on 18 Sep scored hit@1 0.882 with an older cached snapshot of the ONNX export. The snapshot downloaded on 28 Sep pads to a fixed 128 tokens but truncates at 256, which broke batches containing longer chunks, so `index.py` now pads each batch to its longest sequence; the difference in hit@1 most likely comes from that change in the model files. Offline tests: 7 for this branch (chunking, index round-trip, three retrieval questions on both backends, the answer path with a scripted client, the tool's read-only and opt-in contract), 17 in total.
 
+## Running on Azure
+
+The receiver also runs on Azure Container Apps in Australia East, deployed and verified on 28 Sep 2026. The public URL is kept out of this README; everything below is reproducible with the Azure CLI.
+
+| Piece | How it is set up |
+|---|---|
+| **Compute** | Azure Container Apps (Consumption plan), 0.25 vCPU / 0.5 GiB, **scales to zero** when idle and back up on the first request (a cold start of roughly 20–60 s, the price of paying nothing while idle) |
+| **Image** | Azure Container Registry (Standard). The app pulls with its **system-assigned managed identity**, so the registry has no admin user and no password |
+| **Secrets** | The webhook signing secret and the Application Insights connection string live in **Key Vault** (RBAC mode). The app reads them through its managed identity with the read-only *Key Vault Secrets User* role; the app configuration holds only Key Vault references |
+| **Telemetry** | `receiver/app.py` switches on `azure-monitor-opentelemetry` only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so requests, outbound httpx calls and exceptions land in **Application Insights**; nothing changes locally |
+| **Second model provider** | Azure OpenAI `gpt-4.1-mini` (GlobalStandard) is the fallback for policy answers: if the Claude call fails, `agent/retrieval/answer.py` sends the same prompt and JSON schema to Azure (`agent/azure_openai.py`). Authentication is **Microsoft Entra ID, no API key**: `az login` locally, a managed identity in Azure |
+| **Deploy** | `.github/workflows/deploy-receiver-azure.yml` builds the image, pushes it and rolls out a new revision on every push to `main` that touches `receiver/`, then checks `/healthz`. GitHub signs in with **OpenID Connect** through a federated credential limited to this repository's `main` branch, so no Azure secret is stored in GitHub; the identity can only push to the registry and update this one app and its environment |
+
+Verified against the Azure deployment: `/healthz` 200; a correctly signed webhook accepted (202) and, with no n8n instance deployed in Azure, recorded as a failed forward after 3 retries, exactly as the recovery path is designed; the same idempotency key again returns `duplicate`; a wrong signature returns 401; the Key Vault secret swap was re-verified the same way; requests appear in Application Insights within a few minutes. The retrieval evaluation run with Azure OpenAI answering (`SWITCHBOARD_ANSWER_PROVIDER=azure python -m agent.retrieval.eval_retrieval --with-answers`) scored the same as Claude on the 20-question set: `needs_human` routing 20/20, citation correctness 17/17, expected fact in answer 16/17, 0 errors, p50 about 2.1 s per answer.
+
 ## Run it
 
 ```bash
@@ -156,9 +171,11 @@ python3 -m pytest mcp_server/test_mcp.py -q      # end-to-end over stdio
 ## Layout
 
 ```
-receiver/        FastAPI webhook receiver + sink + metrics (Dockerised)
+receiver/        FastAPI webhook receiver + sink + metrics (Dockerised; Application Insights when configured)
+.github/         deploy-receiver-azure.yml: build, push and roll out to Azure Container Apps (OIDC)
 n8n/workflows/   the two pipelines as importable JSON (source of truth)
-agent/           Claude tool-use agent (manual loop + LangGraph edition), tools, seed data, evals, offline tests
+agent/           Claude tool-use agent (manual loop + LangGraph edition), tools, seed data, evals, offline tests;
+                 azure_openai.py = Azure OpenAI fallback provider (Entra ID auth)
 agent/retrieval/ policy retrieval: chunk → embed (all-MiniLM-L6-v2) → retrieve → cited answer; labelled QA set + hit@k eval
 mcp_server/      MCP server over the same tools (stdio) + end-to-end client tests; .mcp.json at the root
 scripts/         fire_webhook.py (signed test events)

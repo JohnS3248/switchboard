@@ -94,7 +94,7 @@ def test_answer_needs_human_when_nothing_is_cited(tfidf_index):
     from agent.retrieval.answer import answer
     client = _FakeClient({"answer": "The passages do not cover gift wrapping.", "citations": [], "needs_human": True})
     res = answer("Do we offer gift wrapping?", client=client, index=tfidf_index)
-    assert res == {"answer": "The passages do not cover gift wrapping.", "citations": [], "needs_human": True}
+    assert res == {"answer": "The passages do not cover gift wrapping.", "citations": [], "needs_human": True, "provider": "claude"}
     # a model that claims confidence but cites nothing is still routed to a person
     client = _FakeClient({"answer": "Yes, 5 AUD.", "citations": [], "needs_human": False})
     assert answer("Do we offer gift wrapping?", client=client, index=tfidf_index)["needs_human"] is True
@@ -109,3 +109,41 @@ def test_lookup_policy_tool_is_read_only_and_opt_in(tfidf_index, monkeypatch):
     assert "error" not in out and out["passages"] and {"doc", "heading", "text", "score"} <= set(out["passages"][0])
     assert "lookup_policy" in tools.TOOL_FUNCS and tools.POLICY_TOOL_DEF["strict"] is True
     assert [t["name"] for t in tools.TOOL_DEFS] == ["lookup_record", "calculate", "write_back"]  # default list unchanged
+
+
+class _FailingClient:
+    """Stands in for an Anthropic client whose API call fails."""
+
+    def __init__(self):
+        self.messages = SimpleNamespace(create=self._create)
+
+    def _create(self, **kwargs):
+        import anthropic
+        import httpx
+        raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+
+
+def test_answer_falls_back_to_azure_openai_when_claude_fails(tfidf_index, monkeypatch):
+    from agent import azure_openai
+    from agent.retrieval.answer import answer
+    seen = {}
+
+    def fake_completion(system, user, schema, name="result", client=None):
+        seen.update(system=system, user=user, schema=schema)
+        return {"answer": "Gold customers have 30 days after delivery.", "citations": [1], "needs_human": False}
+
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-41-mini")
+    monkeypatch.setattr(azure_openai, "json_completion", fake_completion)
+    res = answer(QUESTIONS[0][0], client=_FailingClient(), index=tfidf_index)
+    assert res["provider"] == "azure" and res["needs_human"] is False and len(res["citations"]) == 1
+    assert "[1] doc:" in seen["user"] and seen["schema"]["required"] == ["answer", "citations", "needs_human"]
+
+
+def test_answer_raises_when_claude_fails_and_azure_is_not_configured(tfidf_index, monkeypatch):
+    import anthropic
+    from agent.retrieval.answer import answer
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT", raising=False)
+    with pytest.raises(anthropic.APIConnectionError):
+        answer(QUESTIONS[0][0], client=_FailingClient(), index=tfidf_index)

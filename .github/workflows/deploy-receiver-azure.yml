@@ -1,0 +1,54 @@
+# Build the receiver image and roll it out to Azure Container Apps on every push to main that touches receiver/.
+# GitHub signs in to Azure with OpenID Connect (a federated credential on an app registration), so no Azure
+# password or key is stored in GitHub. The app registration only has AcrPush on the registry and Contributor on
+# this one container app. The three IDs are repository variables, not secrets.
+name: Deploy receiver to Azure
+
+on:
+  push:
+    branches: [main]
+    paths: ["receiver/**", ".github/workflows/deploy-receiver-azure.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # needed to request the OIDC token
+  contents: read
+
+env:
+  REGISTRY: switchboardnoah.azurecr.io
+  IMAGE: switchboard-receiver
+  RESOURCE_GROUP: rg-switchboard
+  CONTAINER_APP: switchboard-receiver
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push the image
+        run: |
+          az acr login --name "${REGISTRY%%.*}"
+          docker build -t "$REGISTRY/$IMAGE:${GITHUB_SHA::7}" receiver
+          docker push "$REGISTRY/$IMAGE:${GITHUB_SHA::7}"
+
+      - name: Roll out the new revision
+        run: |
+          az extension add --name containerapp --upgrade --yes --only-show-errors
+          az containerapp update -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" --image "$REGISTRY/$IMAGE:${GITHUB_SHA::7}" --only-show-errors
+
+      - name: Health check
+        run: |
+          fqdn=$(az containerapp show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" --query properties.configuration.ingress.fqdn -o tsv)
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 60 "https://$fqdn/healthz"; then echo; exit 0; fi
+            sleep 10
+          done
+          echo "receiver did not become healthy" >&2; exit 1

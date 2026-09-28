@@ -6,6 +6,10 @@ Inbound business events (orders, forms) land here first. The receiver:
   3. forwards the event to the n8n intake workflow with bounded retries
   4. records latency, status and retry count per event, exposed on /metrics
 
+When APPLICATIONINSIGHTS_CONNECTION_STRING is set (the Azure deployment), requests, dependencies (the httpx
+calls to n8n) and exceptions are sent to Azure Application Insights through OpenTelemetry. Locally it is unset and
+nothing changes.
+
 It also hosts a local "sink" (/sink/rows -> CSV) so the n8n pipelines can be
 run end to end without third-party credentials; swap the sink for the Google
 Sheets / Slack nodes once credentials are configured.
@@ -22,6 +26,11 @@ import statistics
 import time
 from contextlib import contextmanager
 from typing import Any
+
+if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+    from azure.monitor.opentelemetry import configure_azure_monitor  # optional: Azure only
+
+    configure_azure_monitor()
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Response
