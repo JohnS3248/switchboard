@@ -81,8 +81,39 @@ Switchboard is built so the team, not the developer, owns it after handover:
 | **Agent, LangGraph edition** | The same agent as a LangGraph `StateGraph` (agent node ⇄ `ToolNode`) over the same audited functions, policy and schema, so the two orchestrations can be compared on identical evals: `python -m agent.evals.run_evals --impl langgraph`. | `agent/langgraph_agent.py` |
 | **Evals** | 20 business scenarios asserting category, outcome, `needs_human`, which tools ran, which writes happened (or did not), and amounts. Re-seeds the database before each scenario. Produces `report.md` / `report.json` with pass rate, p50 / p95 latency and token usage. | `agent/evals/` |
 | **MCP server** | The same three tools plus two resources (`switchboard://writeback-log`, `switchboard://policy`) over the Model Context Protocol (stdio), so Claude Code or any MCP client can use them. Read-only unless `MCP_ALLOW_WRITES=1`. `.mcp.json` registers it for Claude Code at project scope. | `mcp_server/server.py`, `.mcp.json` |
+| **Retrieval branch** | Policy questions answered from documents, with citations: `docs/policies/` → heading-level chunks → `all-MiniLM-L6-v2` embeddings (ONNX runtime) → cosine top-k → Claude answers from those passages only, or `needs_human`. Labelled QA set with hit@1 / hit@4; optional read-only agent tool `lookup_policy`. | `agent/retrieval/`, `docs/policies/` |
 | **Offline tests** | Tool behaviour, whitelist, strict schemas, the manual loop with a fake client, the LangGraph graph with a scripted chat model, and MCP end-to-end tests that spawn the server over stdio as a real client would. No API calls. | `agent/tests/`, `mcp_server/test_mcp.py` |
 | **Runbook** | Daily checks, failure modes, backup / restore, rollback, a tested recovery drill. | `docs/runbook.md` |
+
+## Retrieval branch
+
+The agent answers questions about *records* ("what is the status of O-5003") by reading the database. The retrieval branch answers questions about *policy* ("how long is the refund window for a gold customer") by reading documents. `agent/retrieval/` indexes the six sample policy documents in `docs/policies/` (refunds and cancellations, shipping and address changes, escalation rules, data handling and privacy, the agent's own operating policy, and the operations runbook; each is marked as a demo sample at the top), retrieves the passages closest to a question, and has Claude answer from those passages only, citing document and heading, or set `needs_human=true` when the passages do not contain the answer.
+
+- **Chunking:** one chunk per `##` section, with document name, title and heading kept as metadata; 41 chunks from 6 documents, roughly 60–250 tokens each (`chunk.py`).
+- **Embedding:** `sentence-transformers/all-MiniLM-L6-v2` (384-d, L2-normalised, cosine similarity), executed through `fastembed` on ONNX runtime. The `sentence-transformers` package itself cannot import on the development machine (its `transformers` dependency pulls in a locally installed `torchvision`, which needs the `lzma` module the local Python build lacks), so the same model is run without torch. If the model cannot be loaded at all, `index.py` falls back to a numpy TF-IDF vectoriser and records that in the index file and the report; the numbers below come from the neural model, not the fallback.
+- **Store:** a plain numpy matrix in `data/retrieval.npz` (git-ignored). At 41 chunks a vector database would be more dependency than data.
+- **Answer:** `answer(question)` sends the top 4 passages to the same model and client the agent uses, enforces the JSON result with `output_config.format`, and maps the passage numbers the model cites back to (document, heading), so a citation can only point at a passage that was actually retrieved. No citation, or a refusal, routes the question to a person.
+- **Agent tool:** `lookup_policy(question)` is registered in `agent/tools.py` as a fourth, read-only tool, but it is not in the agent's default tool list: set `SWITCHBOARD_POLICY_TOOL=1` to add it. The 20-scenario evals were written for three tools and still run on exactly those.
+
+```bash
+python -m agent.retrieval.index                                         # chunk + embed docs/policies → data/retrieval.npz (downloads the ~90 MB model once)
+python -m agent.retrieval.retrieve "Can I change the address after shipping?"          # top chunks with scores, no API call
+python -m agent.retrieval.answer "How long is the refund window for gold customers?"   # cited answer (one API call)
+python -m agent.retrieval.eval_retrieval                                # hit@1 / hit@4 over agent/retrieval/qa_set.json, no API calls
+python -m agent.retrieval.eval_retrieval --with-answers                 # + one answer() call per question
+```
+
+Measured on this machine, 28 Sep 2026 (`agent/retrieval/report_retrieval.md`), over a labelled set of 20 questions (17 answerable, 3 that no document answers):
+
+| What | Result |
+|---|---|
+| Retrieval alone (no model calls) | **hit@1 0.824 (14/17) · hit@4 1.000 (17/17) · MRR 0.902** |
+| `needs_human` routing, all 20 questions | **20/20**: every answerable question answered, all 3 unanswerable ones handed to a person |
+| Citation correctness, 17 answerable | **17/17**: every answer cites a passage that contains the answer |
+| Expected fact in the answer, 17 answerable | **16/17**: the miss is q01, answered correctly as "30 calendar days" where the checker looks for the literal "30 days" |
+| Errors · latency | 0/20 · p50 about 3.0 s per answer |
+
+The three questions not retrieved at rank 1 (q01, q11, q15) still had the right passage in the top 4, so every answer had what it needed. An earlier run on 18 Sep scored hit@1 0.882 with an older cached snapshot of the ONNX export. The snapshot downloaded on 28 Sep pads to a fixed 128 tokens but truncates at 256, which broke batches containing longer chunks, so `index.py` now pads each batch to its longest sequence; the difference in hit@1 most likely comes from that change in the model files. Offline tests: 7 for this branch (chunking, index round-trip, three retrieval questions on both backends, the answer path with a scripted client, the tool's read-only and opt-in contract), 17 in total.
 
 ## Run it
 
@@ -128,8 +159,10 @@ python3 -m pytest mcp_server/test_mcp.py -q      # end-to-end over stdio
 receiver/        FastAPI webhook receiver + sink + metrics (Dockerised)
 n8n/workflows/   the two pipelines as importable JSON (source of truth)
 agent/           Claude tool-use agent (manual loop + LangGraph edition), tools, seed data, evals, offline tests
+agent/retrieval/ policy retrieval: chunk → embed (all-MiniLM-L6-v2) → retrieve → cited answer; labelled QA set + hit@k eval
 mcp_server/      MCP server over the same tools (stdio) + end-to-end client tests; .mcp.json at the root
 scripts/         fire_webhook.py (signed test events)
 docs/            runbook and screenshots
-data/            SQLite event log + CSV sink (git-ignored)
+docs/policies/   six sample operations policy documents (markdown) that the retrieval branch indexes
+data/            SQLite event log + CSV sink + retrieval index (git-ignored)
 ```

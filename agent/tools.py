@@ -85,7 +85,17 @@ def write_back(record_type: str, record_id: str, field: str, value: str, reason:
     return {"ok": True, "record_id": record_id, "field": field, "old": old, "new": value}
 
 
-TOOL_FUNCS = {"lookup_record": lookup_record, "calculate": calculate, "write_back": write_back}
+def lookup_policy(question: str) -> dict:
+    """Read-only: the policy passages most relevant to a question, with doc + heading citations (agent/retrieval)."""
+    from .retrieval.retrieve import retrieve  # lazy: keeps the embedding model out of the other tools' import path
+    try:
+        hits = retrieve(question, k=4)
+    except Exception as e:  # noqa: BLE001 - surfaced to the model as data
+        return {"error": f"policy lookup unavailable: {type(e).__name__}: {e}"}
+    return {"passages": [{"doc": h["doc"], "heading": h["heading"], "text": h["text"], "score": h["score"]} for h in hits]}
+
+
+TOOL_FUNCS = {"lookup_record": lookup_record, "calculate": calculate, "write_back": write_back, "lookup_policy": lookup_policy}
 
 TOOL_DEFS = [
     {
@@ -131,3 +141,17 @@ TOOL_DEFS = [
         },
     },
 ]
+
+# Fourth, read-only tool. Not in TOOL_DEFS by default so the 20-scenario evals run on exactly the tool set they were
+# written for; the agent adds it when SWITCHBOARD_POLICY_TOOL=1 (see agent/agent.py).
+POLICY_TOOL_DEF = {
+    "name": "lookup_policy",
+    "description": "Look up the operations policy (refunds, cancellations, shipping, escalation, privacy) for a question. Read-only. Returns the most relevant passages with their document and heading so you can cite them.",
+    "strict": True,
+    "input_schema": {
+        "type": "object",
+        "properties": {"question": {"type": "string", "description": "The policy question in plain English"}},
+        "required": ["question"],
+        "additionalProperties": False,
+    },
+}

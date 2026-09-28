@@ -1,0 +1,10 @@
+# Python dependencies for agent/, mcp_server/ and the offline tests, at the versions this repo was run with.
+# (receiver/requirements.txt is the receiver's Docker image; n8n needs nothing from here.)
+anthropic==1.6.0
+langgraph==1.2.11
+langchain-anthropic==1.7.2
+mcp==1.27.1
+pytest==9.0.3
+# retrieval branch (agent/retrieval): all-MiniLM-L6-v2 through ONNX runtime, no torch required
+numpy>=2.0
+fastembed==0.8.0

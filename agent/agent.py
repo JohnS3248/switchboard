@@ -16,12 +16,14 @@ from dataclasses import dataclass, field
 import anthropic
 
 from .envfile import load_dotenv
-from .tools import TOOL_DEFS, TOOL_FUNCS
+from .tools import POLICY_TOOL_DEF, TOOL_DEFS, TOOL_FUNCS
 
 load_dotenv()
 
 MODEL = os.environ.get("SWITCHBOARD_MODEL", "claude-opus-5")
 MAX_ROUNDS = 6
+# Opt in to the read-only policy retrieval tool; off by default so the evals keep their original tool set.
+ACTIVE_TOOL_DEFS = TOOL_DEFS + ([POLICY_TOOL_DEF] if os.environ.get("SWITCHBOARD_POLICY_TOOL") == "1" else [])
 
 SYSTEM = """You are Switchboard, the operations agent for a group of retail, hospitality and sports businesses.
 You handle one inbound request at a time using the tools provided.
@@ -72,7 +74,7 @@ def run(request: str, client: anthropic.Anthropic | None = None, model: str = MO
             model=model,
             max_tokens=4096,
             system=SYSTEM,
-            tools=TOOL_DEFS,
+            tools=ACTIVE_TOOL_DEFS,
             output_config={"format": {"type": "json_schema", "schema": RESULT_SCHEMA}},
             messages=messages,
         )
