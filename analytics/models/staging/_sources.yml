@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: ops
+    description: Operational tables written by the receiver (events) and the agent (customers, orders, writeback_log).
+    database: ops
+    schema: main
+    tables:
+      - name: events
+        description: One row per inbound webhook, with the forwarding outcome, retry count and latency.
+        columns:
+          - name: idem_key
+            tests: [unique, not_null]
+      - name: customers
+      - name: orders
+      - name: writeback_log
+        description: Audit log of every field the agent changed, with the old value, new value and reason.

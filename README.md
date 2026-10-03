@@ -115,6 +115,26 @@ Measured on this machine, 28 Sep 2026 (`agent/retrieval/report_retrieval.md`), o
 
 The three questions not retrieved at rank 1 (q01, q11, q15) still had the right passage in the top 4, so every answer had what it needed. An earlier run on 18 Sep scored hit@1 0.882 with an older cached snapshot of the ONNX export. The snapshot downloaded on 28 Sep pads to a fixed 128 tokens but truncates at 256, which broke batches containing longer chunks, so `index.py` now pads each batch to its longest sequence; the difference in hit@1 most likely comes from that change in the model files. Offline tests: 7 for this branch (chunking, index round-trip, three retrieval questions on both backends, the answer path with a scripted client, the tool's read-only and opt-in contract), 17 in total.
 
+## Operations reporting (dbt)
+
+The receiver and the agent already record everything an operations team needs to answer "what broke, who was hit, and did it recover": every inbound event with its outcome, retries and latency, and every field the agent changed with the reason. `analytics/` turns those tables into two reports with dbt, run on DuckDB straight off the SQLite file, so there is no warehouse to stand up.
+
+- **`fct_daily_operations`**: one row per day with events in, delivered, failed, rejected, retried, p50 and p95 latency, and the agent's write-backs. A day under 85% delivery is flagged as an incident.
+- **`rpt_affected_customers`**: every customer whose requests failed or were rejected, with the failure reasons, the orders they mentioned, their open orders and value, and whether a later request from them got through. Unrecovered and higher-tier customers sort first.
+
+Staging models unpack the JSON event bodies and normalise outcomes; 28 data tests check keys, accepted values, that every event and order links to a real customer, that every agent write carries a reason and touches only a whitelisted field, that daily outcomes add up, and that no failed customer is missing from the report.
+
+`scripts/simulate_ops.py` writes a deterministic month of operations data (about 600 events, one upstream outage on 13 September, 40 audited write-backs) so the models have something real-shaped to run on. On it, the daily report flags exactly one incident day (25 events, 7 delivered) and the affected-customers report lists all five customers, each with a later successful request. CI runs the simulator and `dbt build` on every change to the analytics project.
+
+```bash
+python scripts/simulate_ops.py                 # writes data/ops_sample.db
+cd analytics
+pip install -r requirements.txt
+dbt build --profiles-dir .                     # 6 models, 28 tests
+```
+
+Point `OPS_DB` at the live `data/switchboard.db` to report on real traffic instead.
+
 ## Running on Azure
 
 The receiver also runs on Azure Container Apps in Australia East, deployed and verified on 28 Sep 2026. The public URL is kept out of this README; everything below is reproducible with the Azure CLI.
@@ -172,13 +192,15 @@ python3 -m pytest mcp_server/test_mcp.py -q      # end-to-end over stdio
 
 ```
 receiver/        FastAPI webhook receiver + sink + metrics (Dockerised; Application Insights when configured)
-.github/         deploy-receiver-azure.yml: build, push and roll out to Azure Container Apps (OIDC)
+.github/         deploy-receiver-azure.yml: build, push and roll out to Azure Container Apps (OIDC);
+                 analytics.yml: simulate data + dbt build on every analytics change
 n8n/workflows/   the two pipelines as importable JSON (source of truth)
 agent/           Claude tool-use agent (manual loop + LangGraph edition), tools, seed data, evals, offline tests;
                  azure_openai.py = Azure OpenAI fallback provider (Entra ID auth)
 agent/retrieval/ policy retrieval: chunk → embed (all-MiniLM-L6-v2) → retrieve → cited answer; labelled QA set + hit@k eval
 mcp_server/      MCP server over the same tools (stdio) + end-to-end client tests; .mcp.json at the root
-scripts/         fire_webhook.py (signed test events)
+scripts/         fire_webhook.py (signed test events), simulate_ops.py (a month of operations data for analytics)
+analytics/       dbt project on DuckDB: staging models, daily operations and affected-customers reports, data tests
 docs/            runbook and screenshots
 docs/policies/   six sample operations policy documents (markdown) that the retrieval branch indexes
 data/            SQLite event log + CSV sink + retrieval index (git-ignored)

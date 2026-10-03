@@ -7,3 +7,11 @@ n8n_data/
 __pycache__/
 *.pyc
 .venv/
+
+# dbt (analytics/)
+analytics/warehouse.duckdb*
+analytics/target/
+analytics/logs/
+analytics/dbt_packages/
+logs/
+analytics/.user.yml

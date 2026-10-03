@@ -1,0 +1,14 @@
+# Local DuckDB warehouse that reads the Switchboard SQLite file directly, so there is nothing to install or load.
+# OPS_DB points at the operational database (defaults to the simulated month written by scripts/simulate_ops.py).
+switchboard_ops:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'warehouse.duckdb') }}"
+      extensions: [sqlite]
+      attach:
+        - path: "{{ env_var('OPS_DB', '../data/ops_sample.db') }}"
+          type: sqlite
+          alias: ops
+      threads: 4

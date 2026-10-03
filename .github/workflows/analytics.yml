@@ -1,0 +1,26 @@
+# Build the operations models and run every data test on each change to the analytics project or the simulator.
+# The simulator writes the same month of data every time, so a failing test means the models changed, not the data.
+name: Analytics (dbt)
+
+on:
+  push:
+    paths: ["analytics/**", "scripts/simulate_ops.py", "agent/seed.py", ".github/workflows/analytics.yml"]
+  pull_request:
+    paths: ["analytics/**", "scripts/simulate_ops.py", "agent/seed.py", ".github/workflows/analytics.yml"]
+  workflow_dispatch:
+
+jobs:
+  dbt-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dbt
+        run: pip install -r analytics/requirements.txt
+      - name: Write the simulated month of operations data
+        run: python scripts/simulate_ops.py
+      - name: Build models and run data tests
+        working-directory: analytics
+        run: dbt build --profiles-dir .

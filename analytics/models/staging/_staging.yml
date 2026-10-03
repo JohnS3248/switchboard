@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: stg_events
+    columns:
+      - name: event_id
+        tests: [unique, not_null]
+      - name: outcome
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [delivered, failed, rejected]
+      - name: customer_email
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_email
+  - name: stg_customers
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: customer_email
+        tests: [unique, not_null]
+      - name: tier
+        tests:
+          - accepted_values:
+              arguments:
+                values: [standard, gold, vip]
+  - name: stg_orders
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+  - name: stg_writebacks
+    columns:
+      - name: writeback_id
+        tests: [unique, not_null]
+      - name: reason
+        description: Every automated change must carry a reason.
+        tests: [not_null]
+      - name: field
+        description: Only the fields the agent is allowed to write.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [status, tier, email]

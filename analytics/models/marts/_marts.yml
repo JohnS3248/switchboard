@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: fct_daily_operations
+    description: Daily delivery, retries, latency and agent write-backs; flags days under 85% delivery.
+    columns:
+      - name: ops_date
+        tests: [unique, not_null]
+      - name: events
+        tests: [not_null]
+  - name: rpt_affected_customers
+    description: Customers hit by failed or rejected events, their open orders, and whether they have recovered.
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
